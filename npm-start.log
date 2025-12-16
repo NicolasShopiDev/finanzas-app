@@ -1,0 +1,54 @@
+
+> start
+> cross-env NEXT_TELEMETRY_DISABLED=1 DISABLE_OPENNEXT=true PORT=80 next start
+
+   ▲ Next.js 15.3.3
+   - Local:        http://localhost:80
+   - Network:      http://200.234.227.176:80
+
+ ✓ Starting...
+ ✓ Ready in 470ms
+[API] GET /api/settings
+[API] GET /api/budget - month: 12 year: 2025
+[API] GET /api/budget - result: [{"_id":"692fb0da3fccdac1e5afce4c","month":12,"year":2025,"total_budget":4000,"createdAt":"2025-12-03T03:39:06.803Z","updatedAt":"2025-12-11T15:11:10.669Z","createdBy":"692fadea56d60cfe14f17a6b","id":"692fb0da3fccdac1e5afce4c"}]
+[API] GET /api/categories - activeOnly: false includeDeleted: false forMonth: 2025-12 budgetId: null
+[API] GET /api/categories - result count: 8
+[API] GET /api/categories - activeOnly: false includeDeleted: true forMonth: null budgetId: null
+[API] GET /api/categories - result count: 8
+[API] GET /api/expenses - category_id: null dates: 2025-11-30T16:00:00.000Z 2025-12-30T16:00:00.000Z
+[API] Found 19 manual expenses and 24 bank transactions
+[API] Returning total merged items: 29
+[API] Returning total merged items: 29
+[API] GET /api/settings
+[API] GET /api/budget - month: 12 year: 2025
+[API] GET /api/budget - result: [{"_id":"692fb0da3fccdac1e5afce4c","month":12,"year":2025,"total_budget":4000,"createdAt":"2025-12-03T03:39:06.803Z","updatedAt":"2025-12-11T15:11:10.669Z","createdBy":"692fadea56d60cfe14f17a6b","id":"692fb0da3fccdac1e5afce4c"}]
+[API] GET /api/categories - activeOnly: false includeDeleted: false forMonth: 2025-12 budgetId: null
+[API] GET /api/categories - result count: 8
+[API] GET /api/categories - activeOnly: false includeDeleted: true forMonth: null budgetId: null
+[API] GET /api/categories - result count: 8
+[API] GET /api/expenses - category_id: null dates: 2025-11-30T16:00:00.000Z 2025-12-30T16:00:00.000Z
+[API] Found 19 manual expenses and 24 bank transactions
+[API] Returning total merged items: 29
+[API] Returning total merged items: 29
+[API] GET /api/settings
+[API] GET /api/budget - month: 12 year: 2025
+[API] GET /api/budget - result: [{"_id":"692fb0da3fccdac1e5afce4c","month":12,"year":2025,"total_budget":4000,"createdAt":"2025-12-03T03:39:06.803Z","updatedAt":"2025-12-11T15:11:10.669Z","createdBy":"692fadea56d60cfe14f17a6b","id":"692fb0da3fccdac1e5afce4c"}]
+[API] GET /api/categories - activeOnly: false includeDeleted: false forMonth: 2025-12 budgetId: null
+[API] GET /api/categories - result count: 8
+[API] GET /api/categories - activeOnly: false includeDeleted: true forMonth: null budgetId: null
+[API] GET /api/categories - result count: 8
+[API] GET /api/expenses - category_id: null dates: 2025-11-30T16:00:00.000Z 2025-12-30T16:00:00.000Z
+[API] Found 19 manual expenses and 24 bank transactions
+[API] Returning total merged items: 29
+[API] Returning total merged items: 29
+[API] GET /api/settings
+[API] GET /api/budget - month: 12 year: 2025
+[API] GET /api/budget - result: [{"_id":"692fb0da3fccdac1e5afce4c","month":12,"year":2025,"total_budget":4000,"createdAt":"2025-12-03T03:39:06.803Z","updatedAt":"2025-12-11T15:11:10.669Z","createdBy":"692fadea56d60cfe14f17a6b","id":"692fb0da3fccdac1e5afce4c"}]
+[API] GET /api/categories - activeOnly: false includeDeleted: false forMonth: 2025-12 budgetId: null
+[API] GET /api/categories - result count: 8
+[API] GET /api/categories - activeOnly: false includeDeleted: true forMonth: null budgetId: null
+[API] GET /api/categories - result count: 8
+[API] GET /api/expenses - category_id: null dates: 2025-11-30T16:00:00.000Z 2025-12-30T16:00:00.000Z
+[API] Found 19 manual expenses and 24 bank transactions
+[API] Returning total merged items: 29
+[API] Returning total merged items: 29
