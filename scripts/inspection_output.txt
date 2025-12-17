@@ -1,0 +1,19 @@
+﻿Ô£à Loaded .env
+­ƒöî Connecting to https://api.totalum.app/ with key sk-ey...
+Fetching categories...
+
+Found 5 categories:
+- [fija] Servicios (Luz, Agua, Gas) (ID: 692fb0e83fccdac1e5afce50) Status: undefined
+- [fija] Internet y M├│vil (ID: 692fb0e83fccdac1e5afce52) Status: undefined
+- [variable] Supermercado (ID: 692fb0e83fccdac1e5afce54) Status: undefined
+- [variable] Transporte (ID: 692fb0e83fccdac1e5afce56) Status: undefined
+- [variable] Ocio y Entretenimiento (ID: 692fb0e83fccdac1e5afce58) Status: undefined
+
+Fetching recent expenses...
+
+Found 5 recent expenses:
+- 2025-12-01 | 800Ôé¼ | Pago alquiler diciembre (undefined)
+- 2025-12-02 | 65Ôé¼ | Factura luz (undefined)
+- 2025-12-01 | 85.5Ôé¼ | Compra semanal Mercadona (undefined)
+- 2025-12-02 | 55Ôé¼ | Gasolina coche (undefined)
+- 2025-12-01 | 42Ôé¼ | Cena con amigos (undefined)
