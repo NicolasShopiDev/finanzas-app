@@ -135,37 +135,37 @@ export default function EstadisticasPage() {
         {/* Summary Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
           <div className="card-surface p-4 sm:p-6 rounded-2xl">
-            <p className="text-[10px] sm:text-caption text-muted-foreground mb-1">PRESUPUESTO</p>
+            <p className="text-xs sm:text-caption text-muted-foreground mb-1">PRESUPUESTO</p>
             <p className="text-lg sm:text-2xl font-bold text-primary text-glow-primary truncate">
               €{totals.totalBudget.toLocaleString()}
             </p>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1 hidden sm:block">Acumulado anual</p>
+            <p className="text-xs text-muted-foreground mt-1 hidden sm:block">Acumulado anual</p>
           </div>
 
           <div className="card-surface p-4 sm:p-6 rounded-2xl">
-            <p className="text-[10px] sm:text-caption text-muted-foreground mb-1">GASTADO</p>
+            <p className="text-xs sm:text-caption text-muted-foreground mb-1">GASTADO</p>
             <p className="text-lg sm:text-2xl font-bold text-destructive truncate">
               €{totals.totalSpent.toLocaleString()}
             </p>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">{totals.totalExpenses} <span className="hidden sm:inline">transacciones</span><span className="sm:hidden">gastos</span></p>
+            <p className="text-xs text-muted-foreground mt-1">{totals.totalExpenses} <span className="hidden sm:inline">transacciones</span><span className="sm:hidden">gastos</span></p>
           </div>
 
           <div className="card-surface p-4 sm:p-6 rounded-2xl">
-            <p className="text-[10px] sm:text-caption text-muted-foreground mb-1">AHORRO</p>
+            <p className="text-xs sm:text-caption text-muted-foreground mb-1">AHORRO</p>
             <p className={`text-lg sm:text-2xl font-bold truncate ${totals.totalSavings >= 0 ? 'text-primary text-glow-primary' : 'text-destructive'}`}>
               €{totals.totalSavings.toLocaleString()}
             </p>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               {totals.totalBudget > 0 ? ((totals.totalSavings / totals.totalBudget) * 100).toFixed(1) : 0}%
             </p>
           </div>
 
           <div className="card-surface p-4 sm:p-6 rounded-2xl">
-            <p className="text-[10px] sm:text-caption text-muted-foreground mb-1">PROMEDIO</p>
+            <p className="text-xs sm:text-caption text-muted-foreground mb-1">PROMEDIO</p>
             <p className="text-lg sm:text-2xl font-bold text-ai text-glow-ai truncate">
               €{totals.avgMonthlySpent.toFixed(0)}
             </p>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">Por mes</p>
+            <p className="text-xs text-muted-foreground mt-1">Por mes</p>
           </div>
         </div>
 
@@ -357,7 +357,8 @@ export default function EstadisticasPage() {
             </h2>
             <p className="text-sm text-muted-foreground mt-1">Resumen completo por cada mes</p>
           </div>
-          <div className="overflow-x-auto">
+          {/* Desktop Table */}
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border">
@@ -404,6 +405,49 @@ export default function EstadisticasPage() {
                 </tr>
               </tfoot>
             </table>
+          </div>
+
+          {/* Mobile Cards for Monthly Details */}
+          <div className="md:hidden space-y-4">
+            {monthlyData.map((month) => {
+              const percentage = month.budget > 0 ? (month.spent / month.budget) * 100 : 0;
+              const isOver = month.spent > month.budget;
+              return (
+                <div key={month.month} className="bg-card/30 rounded-xl p-4 border border-border/50">
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="font-semibold text-foreground capitalize text-lg">{month.monthName}</span>
+                    <span className={`badge ${percentage > 100 ? "badge-danger" : percentage > 80 ? "badge-warning" : "badge-primary"}`}>
+                      {percentage.toFixed(0)}%
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 pb-3 border-b border-border/30 mb-3">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Presupuesto</p>
+                      <p className="text-sm font-medium text-white">€{month.budget.toLocaleString()}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground">Gastado</p>
+                      <p className={`text-sm font-medium ${isOver ? 'text-destructive' : 'text-white'}`}>
+                        €{month.spent.toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-muted-foreground">Diferencia</span>
+                    <span className={`font-bold ${month.savings >= 0 ? 'text-primary' : 'text-destructive'}`}>
+                      {month.savings >= 0 ? '+' : ''}€{month.savings.toLocaleString()}
+                    </span>
+                  </div>
+                  {/* Mini visual bar */}
+                  <div className="mt-3 h-1.5 bg-muted rounded-full overflow-hidden w-full">
+                    <div
+                      className={`h-full rounded-full ${isOver ? 'bg-destructive' : 'bg-primary'}`}
+                      style={{ width: `${Math.min(percentage, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

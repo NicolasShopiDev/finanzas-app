@@ -688,25 +688,25 @@ export default function Main() {
                                 </span>
                               </div>
                             </div>
-                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <div className="flex -mr-2 sm:mr-0">
                               <button
                                 onClick={() => {
                                   setCategoryToEdit({ ...category });
                                   setEditCategoryDialogOpen(true);
                                 }}
-                                className="p-1.5 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary transition-all"
+                                className="p-2 sm:p-1.5 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary transition-all"
                                 title="Editar categoría"
                               >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg className="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                                 </svg>
                               </button>
                               <button
                                 onClick={() => handleDeleteCategory(category._id)}
-                                className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all"
+                                className="p-2 sm:p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all"
                                 title="Desactivar categoría"
                               >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg className="w-5 h-5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                                 </svg>
                               </button>
@@ -736,20 +736,23 @@ export default function Main() {
                             </div>
 
                             {category.type === "variable" && (
-                              <div className="pt-2 border-t border-border">
-                                <div className="flex gap-2 items-center">
-                                  <span className="text-xs text-muted-foreground">Ajustar %</span>
-                                  <Input
-                                    type="number"
-                                    className="h-7 w-16 text-xs bg-muted border-border"
-                                    defaultValue={category.percentage}
-                                    onBlur={(e) => {
-                                      const newPercentage = parseFloat(e.target.value);
-                                      if (newPercentage !== category.percentage) {
-                                        handleUpdateCategory(category._id, { percentage: newPercentage });
-                                      }
-                                    }}
-                                  />
+                              <div className="pt-3 border-t border-border mt-3">
+                                <div className="flex gap-3 items-center justify-between sm:justify-start">
+                                  <span className="text-sm text-muted-foreground">Ajustar porcentaje</span>
+                                  <div className="relative">
+                                    <Input
+                                      type="number"
+                                      className="h-10 w-24 text-base bg-muted border-border text-center"
+                                      defaultValue={category.percentage}
+                                      onBlur={(e) => {
+                                        const newPercentage = parseFloat(e.target.value);
+                                        if (newPercentage !== category.percentage) {
+                                          handleUpdateCategory(category._id, { percentage: newPercentage });
+                                        }
+                                      }}
+                                    />
+                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none text-sm">%</div>
+                                  </div>
                                 </div>
                               </div>
                             )}
@@ -905,32 +908,40 @@ export default function Main() {
                         return (
                           <div
                             key={expense._id}
-                            className="flex items-center justify-between p-3 sm:p-4 hover:bg-white/[0.02] transition-colors group"
+                            className="flex items-start sm:items-center justify-between p-4 hover:bg-white/[0.02] transition-colors group"
                           >
-                            <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
-                              <span className="text-xl sm:text-2xl flex-shrink-0">{category?.icon || "💰"}</span>
+                            <div className="flex items-start sm:items-center gap-3 sm:gap-4 min-w-0 flex-1">
+                              <span className="text-2xl sm:text-2xl flex-shrink-0 mt-0.5 sm:mt-0">{category?.icon || "💰"}</span>
                               <div className="min-w-0 flex-1">
-                                <p className="font-medium text-white text-sm sm:text-base truncate">{expense.description}</p>
-                                <p className="text-xs sm:text-sm text-muted-foreground truncate">
-                                  {category?.name || "Sin categoría"} • {new Date(expense.date).toLocaleDateString("es-ES", {
-                                    day: "numeric",
-                                    month: "short"
-                                  })}
-                                  {showOriginalCurrency && (
-                                    <span className="ml-1 sm:ml-2 text-cyan-400">
-                                      ({getCurrencySymbol(originalCurrency)}{formatAmount(originalAmount)})
-                                    </span>
-                                  )}
-                                </p>
+                                <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2">
+                                  <p className="font-medium text-white text-base truncate">{expense.description}</p>
+                                  <p className="text-xs text-muted-foreground hidden sm:block">
+                                    • {new Date(expense.date).toLocaleDateString("es-ES", { day: "numeric", month: "short" })}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2 mt-0.5 sm:mt-0">
+                                  <p className="text-xs text-muted-foreground truncate sm:hidden">
+                                    {new Date(expense.date).toLocaleDateString("es-ES", { day: "numeric", month: "short" })}
+                                  </p>
+                                  <p className="text-xs sm:text-sm text-muted-foreground truncate">
+                                    {category?.name || "Sin categoría"}
+                                    {showOriginalCurrency && (
+                                      <span className="ml-1 sm:ml-2 text-cyan-400 font-mono">
+                                        ({getCurrencySymbol(originalCurrency)}{formatAmount(originalAmount)})
+                                      </span>
+                                    )}
+                                  </p>
+                                </div>
                               </div>
                             </div>
-                            <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0 ml-2">
-                              <span className="font-semibold text-sm sm:text-lg text-white tabular-nums">
+                            <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2 sm:gap-4 flex-shrink-0 ml-2">
+                              <span className="font-semibold text-base sm:text-lg text-white tabular-nums">
                                 -{formatCurrency(expense.amount)}
                               </span>
                               <button
                                 onClick={() => handleDeleteExpense(expense._id)}
-                                className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all"
+                                className="p-2 rounded-lg bg-destructive/10 text-destructive sm:bg-transparent sm:text-muted-foreground sm:hover:bg-destructive/10 sm:hover:text-destructive transition-all"
+                                aria-label="Eliminar gasto"
                               >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
