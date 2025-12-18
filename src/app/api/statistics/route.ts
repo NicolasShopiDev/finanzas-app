@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { totalumSdk } from "@/lib/totalum";
+import { requireAuth, AuthError, unauthorizedResponse } from "@/lib/auth-utils";
 import type { MonthlyBudget, Category, Expense } from "@/types/database";
 
 function serializeError(err: unknown) {
@@ -28,20 +29,23 @@ interface NestedQuery {
 // GET - Get statistics data
 export async function GET(req: Request) {
   try {
+    const user = await requireAuth();
     const { searchParams } = new URL(req.url);
     const year = searchParams.get("year") || new Date().getFullYear().toString();
 
-    console.log("[API] GET /api/statistics - year:", year);
+    console.log("[API] GET /api/statistics - year:", year, "user:", user.id);
 
     // Get all budgets for the year
     const budgetsResult = await totalumSdk.crud.getRecords<MonthlyBudget>("monthly_budget", {
-      filter: [{ year: parseInt(year) }],
+      filter: [{ year: parseInt(year), user_id: user.id }],
       sort: { month: 1 },
     });
     console.log("[API] Statistics - budgets found:", budgetsResult.data?.length);
 
     // Get all categories
-    const categoriesResult = await totalumSdk.crud.getRecords<Category>("category", {});
+    const categoriesResult = await totalumSdk.crud.getRecords<Category>("category", {
+      filter: [{ user_id: user.id }],
+    });
     console.log("[API] Statistics - categories found:", categoriesResult.data?.length);
 
     // Get all expenses for the year
@@ -52,6 +56,7 @@ export async function GET(req: Request) {
       filter: [
         { date: { gte: startOfYear } },
         { date: { lte: endOfYear } },
+        { user_id: user.id },
       ],
       pagination: { limit: 1000, page: 0 },
     });
@@ -132,6 +137,9 @@ export async function GET(req: Request) {
     console.log("[API] Statistics calculated successfully");
     return NextResponse.json({ ok: true, data: statistics });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API ERROR] GET /api/statistics", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }

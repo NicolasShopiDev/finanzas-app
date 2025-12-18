@@ -2,9 +2,13 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { totalumSdk } from "@/lib/totalum";
 import { convertCurrency } from "@/lib/exchange-rate";
+import { requireAuth, AuthError, unauthorizedResponse } from "@/lib/auth-utils";
 import type { Expense, UserSettings, ExpenseWithCurrency } from "@/types/database";
 
 function serializeError(err: unknown) {
+  if (err instanceof AuthError) {
+    return { message: err.message, code: "UNAUTHORIZED", name: err.name };
+  }
   const e = err as { message?: string; code?: string; name?: string; response?: { status?: number; data?: unknown }; stack?: string };
   return {
     message: e?.message ?? "Unknown error",
@@ -28,9 +32,10 @@ const createExpenseSchema = z.object({
 });
 
 // Helper to get user's base currency
-async function getBaseCurrency(): Promise<{ currency: string; symbol: string }> {
+async function getBaseCurrency(userId: string): Promise<{ currency: string; symbol: string }> {
   try {
     const result = await totalumSdk.crud.getRecords<UserSettings>('user_settings', {
+      filter: [{ user_id: userId }],
       pagination: { limit: 1, page: 0 },
     });
     if (result.data && result.data.length > 0) {
@@ -48,12 +53,14 @@ async function getBaseCurrency(): Promise<{ currency: string; symbol: string }> 
 // GET - Get all expenses (including bank transactions)
 export async function GET(req: Request) {
   try {
+    const user = await requireAuth();
+
     const { searchParams } = new URL(req.url);
     const categoryId = searchParams.get("category_id");
     const startDate = searchParams.get("start_date");
     const endDate = searchParams.get("end_date");
 
-    console.log("[API] GET /api/expenses - category_id:", categoryId, "dates:", startDate, endDate);
+    console.log("[API] GET /api/expenses - user:", user.id, "category_id:", categoryId, "dates:", startDate, endDate);
 
     // Prepare date filter object
     const dateFilter: Record<string, unknown> = {};
@@ -61,7 +68,7 @@ export async function GET(req: Request) {
     if (endDate) dateFilter.lte = new Date(endDate);
 
     // 1. Fetch Manual Expenses
-    const expenseFilter: Record<string, unknown>[] = [];
+    const expenseFilter: Record<string, unknown>[] = [{ user_id: user.id }];
     if (categoryId) expenseFilter.push({ category: categoryId });
     if (startDate) expenseFilter.push({ date: { gte: startDate } });
     if (endDate) expenseFilter.push({ date: { lte: endDate } });
@@ -71,7 +78,7 @@ export async function GET(req: Request) {
     );
 
     // 2. Fetch Bank Transactions (type="gasto")
-    const bankFilter: Record<string, unknown>[] = [{ transaction_type: "gasto" }];
+    const bankFilter: Record<string, unknown>[] = [{ user_id: user.id }, { transaction_type: "gasto" }];
     // Note: bank transactions use 'booking_date', manually mapped to filters
     if (categoryId) bankFilter.push({ category: categoryId });
     // Note: bank transactions use 'booking_date'
@@ -134,6 +141,9 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ ok: true, data: allExpenses });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API ERROR] GET /api/expenses", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -142,6 +152,8 @@ export async function GET(req: Request) {
 // POST - Create new expense (with multi-currency support)
 export async function POST(req: Request) {
   try {
+    const user = await requireAuth();
+
     const body = await req.json().catch(() => ({}));
     const parsed = createExpenseSchema.safeParse(body);
 
@@ -149,9 +161,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: parsed.error.flatten() }, { status: 400 });
     }
 
-    console.log("[API] POST /api/expenses - Creating expense:", parsed.data);
+    console.log("[API] POST /api/expenses - user:", user.id, "Creating expense:", parsed.data);
 
-    const baseCurrency = await getBaseCurrency();
+    const baseCurrency = await getBaseCurrency(user.id);
     const expenseDate = parsed.data.date;
 
     // Prepare expense data
@@ -159,6 +171,7 @@ export async function POST(req: Request) {
       description: parsed.data.description,
       date: new Date(expenseDate),
       category: parsed.data.category,
+      user_id: user.id,
     };
 
     // Handle multi-currency conversion
@@ -204,6 +217,9 @@ export async function POST(req: Request) {
     console.log("[API] POST /api/expenses - Created expense:", result.data);
     return NextResponse.json({ ok: true, data: result.data });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API ERROR] POST /api/expenses", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -212,6 +228,8 @@ export async function POST(req: Request) {
 // PUT - Update expense
 export async function PUT(req: Request) {
   try {
+    const user = await requireAuth();
+
     const body = (await req.json().catch(() => ({}))) as { id?: string; description?: string; amount?: number; date?: string; category?: string };
     const { id, ...data } = body;
 
@@ -219,7 +237,13 @@ export async function PUT(req: Request) {
       return NextResponse.json({ ok: false, error: "Expense ID required" }, { status: 400 });
     }
 
-    console.log("[API] PUT /api/expenses - Updating expense:", id, data);
+    console.log("[API] PUT /api/expenses - user:", user.id, "Updating expense:", id, data);
+
+    // Verify ownership
+    const expenseResult = await totalumSdk.crud.getRecordById<Expense>("expense", id);
+    if (!expenseResult.data || (expenseResult.data as Expense & { user_id?: string }).user_id !== user.id) {
+      return NextResponse.json({ ok: false, error: "Expense not found or access denied" }, { status: 404 });
+    }
 
     // Convert date if present
     const updateData: Record<string, unknown> = { ...data };
@@ -232,6 +256,9 @@ export async function PUT(req: Request) {
 
     return NextResponse.json({ ok: true, data: result.data });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API ERROR] PUT /api/expenses", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -240,6 +267,8 @@ export async function PUT(req: Request) {
 // DELETE - Delete expense
 export async function DELETE(req: Request) {
   try {
+    const user = await requireAuth();
+
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
 
@@ -247,13 +276,22 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ ok: false, error: "Expense ID required" }, { status: 400 });
     }
 
-    console.log("[API] DELETE /api/expenses - Deleting expense:", id);
+    console.log("[API] DELETE /api/expenses - user:", user.id, "Deleting expense:", id);
+
+    // Verify ownership
+    const expenseResult = await totalumSdk.crud.getRecordById<Expense>("expense", id);
+    if (!expenseResult.data || (expenseResult.data as Expense & { user_id?: string }).user_id !== user.id) {
+      return NextResponse.json({ ok: false, error: "Expense not found or access denied" }, { status: 404 });
+    }
 
     const result = await totalumSdk.crud.deleteRecordById("expense", id);
     console.log("[API] DELETE /api/expenses - Deleted expense");
 
     return NextResponse.json({ ok: true, data: result.data });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API ERROR] DELETE /api/expenses", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }

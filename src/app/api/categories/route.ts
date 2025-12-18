@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { totalumSdk } from "@/lib/totalum";
+import { requireAuth, AuthError, unauthorizedResponse } from "@/lib/auth-utils";
 import type { Category, CategoryNameHistoryEntry } from "@/types/database";
 
 function serializeError(err: unknown) {
+  if (err instanceof AuthError) {
+    return { message: err.message, code: "UNAUTHORIZED", name: err.name };
+  }
   const e = err as { message?: string; code?: string; name?: string; response?: { status?: number; data?: unknown }; stack?: string };
   return {
     message: e?.message ?? "Unknown error",
@@ -58,6 +62,8 @@ function getCategoryNameAtDate(category: Category, targetDate: Date): string {
 // GET - Get all categories (global, with filtering options)
 export async function GET(req: Request) {
   try {
+    const user = await requireAuth();
+
     const { searchParams } = new URL(req.url);
     const activeOnly = searchParams.get("active_only") === "true";
     const includeDeleted = searchParams.get("include_deleted") === "true";
@@ -67,14 +73,14 @@ export async function GET(req: Request) {
     // Legacy support: budget_id parameter (now ignored, categories are global)
     const budgetId = searchParams.get("budget_id");
 
-    console.log("[API] GET /api/categories - activeOnly:", activeOnly, "includeDeleted:", includeDeleted, "forMonth:", forMonth, "budgetId:", budgetId);
+    console.log("[API] GET /api/categories - user:", user.id, "activeOnly:", activeOnly, "includeDeleted:", includeDeleted, "forMonth:", forMonth, "budgetId:", budgetId);
 
-    // Build filter - categories are now global
-    const filter: { filter?: Array<Record<string, unknown>> } = {};
+    // Build filter - categories are now global, filtered by user_id
+    const filter: { filter?: Array<Record<string, unknown>> } = { filter: [{ user_id: user.id }] };
 
     if (activeOnly && !includeDeleted) {
       // Only get active categories
-      filter.filter = [{ is_active: "si" }];
+      filter.filter!.push({ is_active: "si" });
     } else if (!includeDeleted) {
       // By default, get active categories OR categories without is_active set (legacy data)
       // We fetch all and filter in code to handle null/undefined is_active
@@ -98,6 +104,7 @@ export async function GET(req: Request) {
       // Get all expenses for this month to find which categories were used
       const expensesResult = await totalumSdk.crud.getRecords("expense", {
         filter: [{
+          user_id: user.id,
           date: {
             gte: startOfMonth,
             lte: endOfMonth
@@ -109,7 +116,9 @@ export async function GET(req: Request) {
 
       // If there are used categories that are now deleted, we need to include them
       if (usedCategoryIds.size > 0) {
-        const allCategoriesResult = await totalumSdk.crud.getRecords<Category>("category", {});
+        const allCategoriesResult = await totalumSdk.crud.getRecords<Category>("category", {
+          filter: [{ user_id: user.id }]
+        });
         const allCategories = allCategoriesResult.data || [];
 
         // Add deleted categories that were used in this month
@@ -151,6 +160,9 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ ok: true, data: categories });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API ERROR] GET /api/categories", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -159,6 +171,8 @@ export async function GET(req: Request) {
 // POST - Create new category (global, not tied to a specific month)
 export async function POST(req: Request) {
   try {
+    const user = await requireAuth();
+
     const body = await req.json().catch(() => ({}));
     const parsed = createCategorySchema.safeParse(body);
 
@@ -166,7 +180,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: parsed.error.flatten() }, { status: 400 });
     }
 
-    console.log("[API] POST /api/categories - Creating category:", parsed.data);
+    console.log("[API] POST /api/categories - user:", user.id, "Creating category:", parsed.data);
 
     const now = new Date().toISOString();
     const initialNameHistory: CategoryNameHistoryEntry[] = [{
@@ -182,6 +196,7 @@ export async function POST(req: Request) {
       fixed_amount: parsed.data.fixed_amount || 0,
       is_active: "si",
       name_history: JSON.stringify(initialNameHistory),
+      user_id: user.id,
     };
 
     const result = await totalumSdk.crud.createRecord("category", categoryData);
@@ -189,6 +204,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, data: result.data });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API ERROR] POST /api/categories", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -197,6 +215,8 @@ export async function POST(req: Request) {
 // PUT - Update category (with special handling for name changes)
 export async function PUT(req: Request) {
   try {
+    const user = await requireAuth();
+
     const body = (await req.json().catch(() => ({}))) as {
       id?: string;
       name?: string;
@@ -212,27 +232,29 @@ export async function PUT(req: Request) {
       return NextResponse.json({ ok: false, error: "Category ID required" }, { status: 400 });
     }
 
-    console.log("[API] PUT /api/categories - Updating category:", id, data);
+    console.log("[API] PUT /api/categories - user:", user.id, "Updating category:", id, data);
+
+    // Get current category to verify ownership
+    const currentResult = await totalumSdk.crud.getRecordById<Category>("category", id);
+    const currentCategory = currentResult.data;
+
+    if (!currentCategory || (currentCategory as Category & { user_id?: string }).user_id !== user.id) {
+      return NextResponse.json({ ok: false, error: "Category not found or access denied" }, { status: 404 });
+    }
 
     // If name is being changed, update name_history
-    if (data.name) {
-      // Get current category to check if name is actually changing
-      const currentResult = await totalumSdk.crud.getRecordById<Category>("category", id);
-      const currentCategory = currentResult.data;
+    if (data.name && currentCategory.name !== data.name) {
+      // Name is changing - add to history
+      const currentHistory = parseNameHistory(currentCategory.name_history);
+      const now = new Date().toISOString();
 
-      if (currentCategory && currentCategory.name !== data.name) {
-        // Name is changing - add to history
-        const currentHistory = parseNameHistory(currentCategory.name_history);
-        const now = new Date().toISOString();
+      currentHistory.push({
+        name: data.name,
+        changed_at: now
+      });
 
-        currentHistory.push({
-          name: data.name,
-          changed_at: now
-        });
-
-        (data as Record<string, unknown>).name_history = JSON.stringify(currentHistory);
-        console.log("[API] PUT /api/categories - Name changed, updated history");
-      }
+      (data as Record<string, unknown>).name_history = JSON.stringify(currentHistory);
+      console.log("[API] PUT /api/categories - Name changed, updated history");
     }
 
     const result = await totalumSdk.crud.editRecordById("category", id, data);
@@ -240,6 +262,9 @@ export async function PUT(req: Request) {
 
     return NextResponse.json({ ok: true, data: result.data });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API ERROR] PUT /api/categories", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -248,6 +273,8 @@ export async function PUT(req: Request) {
 // DELETE - Soft delete category (deactivate, don't actually delete)
 export async function DELETE(req: Request) {
   try {
+    const user = await requireAuth();
+
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
     const hardDelete = searchParams.get("hard") === "true"; // For truly removing (admin use)
@@ -256,7 +283,13 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ ok: false, error: "Category ID required" }, { status: 400 });
     }
 
-    console.log("[API] DELETE /api/categories - Deleting category:", id, "hardDelete:", hardDelete);
+    console.log("[API] DELETE /api/categories - user:", user.id, "Deleting category:", id, "hardDelete:", hardDelete);
+
+    // Verify ownership
+    const categoryResult = await totalumSdk.crud.getRecordById<Category>("category", id);
+    if (!categoryResult.data || (categoryResult.data as Category & { user_id?: string }).user_id !== user.id) {
+      return NextResponse.json({ ok: false, error: "Category not found or access denied" }, { status: 404 });
+    }
 
     if (hardDelete) {
       // Actually delete the record (use with caution)
@@ -275,6 +308,9 @@ export async function DELETE(req: Request) {
 
     return NextResponse.json({ ok: true, data: result.data });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API ERROR] DELETE /api/categories", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -283,6 +319,8 @@ export async function DELETE(req: Request) {
 // PATCH - Reactivate a deleted category
 export async function PATCH(req: Request) {
   try {
+    const user = await requireAuth();
+
     const body = (await req.json().catch(() => ({}))) as { id?: string };
     const { id } = body;
 
@@ -290,7 +328,13 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ ok: false, error: "Category ID required" }, { status: 400 });
     }
 
-    console.log("[API] PATCH /api/categories - Reactivating category:", id);
+    console.log("[API] PATCH /api/categories - user:", user.id, "Reactivating category:", id);
+
+    // Verify ownership
+    const categoryResult = await totalumSdk.crud.getRecordById<Category>("category", id);
+    if (!categoryResult.data || (categoryResult.data as Category & { user_id?: string }).user_id !== user.id) {
+      return NextResponse.json({ ok: false, error: "Category not found or access denied" }, { status: 404 });
+    }
 
     const result = await totalumSdk.crud.editRecordById("category", id, {
       is_active: "si",
@@ -300,6 +344,9 @@ export async function PATCH(req: Request) {
 
     return NextResponse.json({ ok: true, data: result.data });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API ERROR] PATCH /api/categories", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }

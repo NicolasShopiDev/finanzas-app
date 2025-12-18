@@ -1,6 +1,7 @@
 // API route for AI-powered smart alerts
 import { NextResponse } from "next/server";
 import { totalumSdk } from "@/lib/totalum";
+import { requireAuth, AuthError, unauthorizedResponse } from "@/lib/auth-utils";
 import {
   SmartAlert,
   AlertAnalysis,
@@ -46,10 +47,11 @@ function formatCurrency(amount: number): string {
 // GET: Fetch all active (non-dismissed) alerts
 export async function GET() {
   try {
-    console.log("[Alerts API] Fetching active alerts...");
+    const user = await requireAuth();
+    console.log("[Alerts API] Fetching active alerts for user:", user.id);
 
     const alertsResult = await totalumSdk.crud.getRecords<SmartAlert>("smart_alert", {
-      filter: [{ is_dismissed: "no" }],
+      filter: [{ is_dismissed: "no", user_id: user.id }],
       sort: { generated_at: -1 },
       pagination: { limit: 50, page: 0 }
     });
@@ -71,6 +73,9 @@ export async function GET() {
     });
 
   } catch (error) {
+    if (error instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[Alerts API] Error fetching alerts:", error);
     return NextResponse.json(
       { ok: false, error: "Error al obtener alertas" },
@@ -82,12 +87,13 @@ export async function GET() {
 // POST: Generate new AI-powered alerts or perform actions
 export async function POST(request: Request) {
   try {
+    const user = await requireAuth();
     const body: { action?: string; alertId?: string } = await request.json();
     const { action, alertId } = body;
 
     // Dismiss an alert
     if (action === "dismiss" && alertId) {
-      console.log(`[Alerts API] Dismissing alert: ${alertId}`);
+      console.log(`[Alerts API] Dismissing alert: ${alertId} for user: ${user.id}`);
       await totalumSdk.crud.editRecordById("smart_alert", alertId, {
         is_dismissed: "si"
       });
@@ -96,9 +102,9 @@ export async function POST(request: Request) {
 
     // Dismiss all alerts
     if (action === "dismiss_all") {
-      console.log("[Alerts API] Dismissing all alerts...");
+      console.log("[Alerts API] Dismissing all alerts for user:", user.id);
       const alertsResult = await totalumSdk.crud.getRecords<SmartAlert>("smart_alert", {
-        filter: [{ is_dismissed: "no" }],
+        filter: [{ is_dismissed: "no", user_id: user.id }],
         pagination: { limit: 100, page: 0 }
       });
 
@@ -112,7 +118,7 @@ export async function POST(request: Request) {
 
     // Generate new alerts with AI
     if (action === "generate") {
-      console.log("[Alerts API] Generating AI-powered alerts...");
+      console.log("[Alerts API] Generating AI-powered alerts for user:", user.id);
 
       const now = new Date();
       const currentMonth = now.getMonth() + 1;
@@ -130,7 +136,7 @@ export async function POST(request: Request) {
       let budget: MonthlyBudget | null = null;
       try {
         const budgetResult = await totalumSdk.crud.getRecords<MonthlyBudget>("monthly_budget", {
-          filter: [{ month: currentMonth, year: currentYear }],
+          filter: [{ month: currentMonth, year: currentYear, user_id: user.id }],
           pagination: { limit: 1, page: 0 }
         });
         budget = budgetResult.data?.[0] || null;
@@ -143,6 +149,7 @@ export async function POST(request: Request) {
       let categories: Category[] = [];
       try {
         const categoriesResult = await totalumSdk.crud.getRecords<Category>("category", {
+          filter: [{ user_id: user.id }],
           pagination: { limit: 50, page: 0 }
         });
         categories = categoriesResult.data || [];
@@ -155,7 +162,7 @@ export async function POST(request: Request) {
       let manualExpenses: Expense[] = [];
       try {
         const expensesResult = await totalumSdk.crud.getRecords<Expense>("expense", {
-          filter: [{ date: { gte: monthStart } }],
+          filter: [{ date: { gte: monthStart }, user_id: user.id }],
           pagination: { limit: 500, page: 0 }
         });
         manualExpenses = expensesResult.data || [];
@@ -170,7 +177,8 @@ export async function POST(request: Request) {
         const prevExpensesResult = await totalumSdk.crud.getRecords<Expense>("expense", {
           filter: [
             { date: { gte: prevMonthStart } },
-            { date: { lte: prevMonthEnd } }
+            { date: { lte: prevMonthEnd } },
+            { user_id: user.id }
           ],
           pagination: { limit: 500, page: 0 }
         });
@@ -185,7 +193,8 @@ export async function POST(request: Request) {
         const txResult = await totalumSdk.crud.getRecords<BankTransaction>("bank_transaction", {
           filter: [
             { transaction_type: "gasto" },
-            { booking_date: { gte: monthStart } }
+            { booking_date: { gte: monthStart } },
+            { user_id: user.id }
           ],
           pagination: { limit: 500, page: 0 }
         });
@@ -202,7 +211,8 @@ export async function POST(request: Request) {
           filter: [
             { transaction_type: "gasto" },
             { booking_date: { gte: prevMonthStart } },
-            { booking_date: { lte: prevMonthEnd } }
+            { booking_date: { lte: prevMonthEnd } },
+            { user_id: user.id }
           ],
           pagination: { limit: 500, page: 0 }
         });
@@ -400,7 +410,8 @@ Responde SOLO con el array JSON, sin explicaciones adicionales.`;
             amount_involved: alert.amount_involved || null,
             recommended_action: alert.recommended_action || "",
             is_dismissed: "no",
-            generated_at: now_iso
+            generated_at: now_iso,
+            user_id: user.id
           };
 
           const result = await totalumSdk.crud.createRecord("smart_alert", newAlert);
@@ -449,6 +460,9 @@ Responde SOLO con el array JSON, sin explicaciones adicionales.`;
     );
 
   } catch (error) {
+    if (error instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[Alerts API] POST Error:", error);
     return NextResponse.json(
       { ok: false, error: "Error al procesar la solicitud" },

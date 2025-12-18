@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { totalumSdk } from "@/lib/totalum";
+import { requireAuth, AuthError, unauthorizedResponse } from "@/lib/auth-utils";
 import type { Savings, SavingsMovement } from "@/types/database";
 
 // Helper to serialize errors
 function serializeError(err: unknown) {
+  if (err instanceof AuthError) {
+    return { message: err.message, code: "UNAUTHORIZED", name: err.name };
+  }
   const e = err as Record<string, unknown>;
   return {
     message: e?.message ?? "Unknown error",
@@ -15,14 +19,17 @@ function serializeError(err: unknown) {
 // GET - Fetch savings balance and recent movements
 export async function GET(req: Request) {
   try {
+    const user = await requireAuth();
+
     const { searchParams } = new URL(req.url);
     const includeMovements = searchParams.get("include_movements") === "true";
     const movementsLimit = parseInt(searchParams.get("movements_limit") || "20");
 
-    console.log("[API /savings] GET request:", { includeMovements, movementsLimit });
+    console.log("[API /savings] GET request - user:", user.id, { includeMovements, movementsLimit });
 
-    // Get savings record (should only be one)
+    // Get savings record for this user (should only be one per user)
     const savingsResult = await totalumSdk.crud.getRecords<Savings>("savings", {
+      filter: [{ user_id: user.id }],
       pagination: { limit: 1, page: 0 },
     });
 
@@ -36,6 +43,7 @@ export async function GET(req: Request) {
         total_balance: 0,
         currency: "EUR",
         last_updated: new Date().toISOString(),
+        user_id: user.id,
       });
       savings = newSavings.data as Savings;
       console.log("[API /savings] Created initial savings record");
@@ -44,7 +52,7 @@ export async function GET(req: Request) {
     let movements: SavingsMovement[] = [];
     if (includeMovements && savings) {
       const movementsResult = await totalumSdk.crud.getRecords<SavingsMovement>("savings_movement", {
-        filter: [{ savings: savings._id }],
+        filter: [{ user_id: user.id }, { savings: savings._id }],
         sort: { date: -1 },
         pagination: { limit: movementsLimit, page: 0 },
       });
@@ -61,6 +69,9 @@ export async function GET(req: Request) {
       }
     });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API /savings] GET error:", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -69,6 +80,8 @@ export async function GET(req: Request) {
 // POST - Create savings movement (transfer to/from budget, withdraw, manual adjustment)
 export async function POST(req: Request) {
   try {
+    const user = await requireAuth();
+
     const body = (await req.json()) as {
       movement_type: "entrada" | "salida" | "asignacion_objetivo";
       amount: number;
@@ -77,14 +90,15 @@ export async function POST(req: Request) {
       savings_goal_id?: string;
     };
 
-    console.log("[API /savings] POST request:", body);
+    console.log("[API /savings] POST request - user:", user.id, body);
 
     if (!body.amount || body.amount <= 0) {
       return NextResponse.json({ ok: false, error: "Amount must be positive" }, { status: 400 });
     }
 
-    // Get current savings
+    // Get current savings for this user
     const savingsResult = await totalumSdk.crud.getRecords<Savings>("savings", {
+      filter: [{ user_id: user.id }],
       pagination: { limit: 1, page: 0 },
     });
 
@@ -116,6 +130,7 @@ export async function POST(req: Request) {
       source: body.source,
       balance_after: newBalance,
       savings: savings._id,
+      user_id: user.id,
     };
 
     if (body.savings_goal_id) {
@@ -133,8 +148,9 @@ export async function POST(req: Request) {
 
     // If assigning to a goal, update goal's current amount
     if (body.movement_type === "asignacion_objetivo" && body.savings_goal_id) {
+      // Verify goal ownership
       const goalResult = await totalumSdk.crud.getRecordById("savings_goal", body.savings_goal_id);
-      if (goalResult.data) {
+      if (goalResult.data && (goalResult.data as { user_id?: string }).user_id === user.id) {
         const goal = goalResult.data as { current_amount: number; target_amount: number };
         const newGoalAmount = (goal.current_amount || 0) + body.amount;
         const updates: Record<string, unknown> = { current_amount: newGoalAmount };
@@ -156,6 +172,9 @@ export async function POST(req: Request) {
       }
     });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API /savings] POST error:", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }

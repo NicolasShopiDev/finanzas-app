@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { totalumSdk } from "@/lib/totalum";
+import { requireAuth, AuthError, unauthorizedResponse } from "@/lib/auth-utils";
 import type { DistributionRule } from "@/types/database";
 
 // Helper to serialize errors
@@ -15,11 +16,12 @@ function serializeError(err: unknown) {
 // GET - Fetch active distribution rule
 export async function GET() {
   try {
-    console.log("[API /distribution-rule] GET request");
+    const user = await requireAuth();
+    console.log("[API /distribution-rule] GET request for user:", user.id);
 
     // Get active rule
     const result = await totalumSdk.crud.getRecords<DistributionRule>("distribution_rule", {
-      filter: [{ is_active: "si" }],
+      filter: [{ is_active: "si", user_id: user.id }],
       sort: { effective_from: -1 },
       pagination: { limit: 1, page: 0 },
     });
@@ -36,6 +38,7 @@ export async function GET() {
         free_percentage: 0,
         is_active: "si",
         effective_from: new Date().toISOString(),
+        user_id: user.id
       });
       rule = newRule.data as DistributionRule;
       console.log("[API /distribution-rule] Created default rule");
@@ -45,6 +48,9 @@ export async function GET() {
 
     return NextResponse.json({ ok: true, data: rule });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API /distribution-rule] GET error:", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -53,13 +59,14 @@ export async function GET() {
 // PUT - Update distribution rule
 export async function PUT(req: Request) {
   try {
+    const user = await requireAuth();
     const body = (await req.json()) as {
       budget_percentage: number;
       savings_percentage: number;
       free_percentage: number;
     };
 
-    console.log("[API /distribution-rule] PUT request:", body);
+    console.log("[API /distribution-rule] PUT request for user:", user.id, body);
 
     // Validate percentages sum to 100
     const total = body.budget_percentage + body.savings_percentage + body.free_percentage;
@@ -80,7 +87,7 @@ export async function PUT(req: Request) {
 
     // Get current active rule
     const currentResult = await totalumSdk.crud.getRecords<DistributionRule>("distribution_rule", {
-      filter: [{ is_active: "si" }],
+      filter: [{ is_active: "si", user_id: user.id }],
       pagination: { limit: 1, page: 0 },
     });
 
@@ -98,12 +105,16 @@ export async function PUT(req: Request) {
       free_percentage: body.free_percentage,
       is_active: "si",
       effective_from: new Date().toISOString(),
+      user_id: user.id
     });
 
     console.log("[API /distribution-rule] Updated rule:", newRule.data);
 
     return NextResponse.json({ ok: true, data: newRule.data });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API /distribution-rule] PUT error:", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -112,12 +123,14 @@ export async function PUT(req: Request) {
 // GET history of all rules
 export async function POST(req: Request) {
   try {
+    const user = await requireAuth();
     const body = (await req.json()) as { action: string };
 
     if (body.action === "history") {
-      console.log("[API /distribution-rule] Fetching rule history");
+      console.log("[API /distribution-rule] Fetching rule history for user:", user.id);
 
       const result = await totalumSdk.crud.getRecords<DistributionRule>("distribution_rule", {
+        filter: [{ user_id: user.id }],
         sort: { effective_from: -1 },
         pagination: { limit: 50, page: 0 },
       });
@@ -127,6 +140,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: false, error: "Unknown action" }, { status: 400 });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API /distribution-rule] POST error:", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }

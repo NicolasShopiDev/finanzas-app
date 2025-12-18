@@ -1,6 +1,7 @@
 // API route for gamification features
 import { NextResponse } from "next/server";
 import { totalumSdk } from "@/lib/totalum";
+import { requireAuth, AuthError, unauthorizedResponse } from "@/lib/auth-utils";
 import {
   UserStreak,
   WeeklyMission,
@@ -41,7 +42,8 @@ function getDaysInMonth(): number {
 // GET: Fetch all gamification data
 export async function GET() {
   try {
-    console.log("[Gamification API] Fetching gamification data...");
+    const user = await requireAuth();
+    console.log("[Gamification API] Fetching gamification data for user:", user.id);
 
     const now = new Date();
     const currentMonth = now.getMonth() + 1;
@@ -54,6 +56,7 @@ export async function GET() {
     let streak: UserStreak | null = null;
     try {
       const streakResult = await totalumSdk.crud.getRecords<UserStreak>("user_streak", {
+        filter: [{ user_id: user.id }],
         pagination: { limit: 1, page: 0 }
       });
       streak = streakResult.data?.[0] || null;
@@ -66,7 +69,7 @@ export async function GET() {
     let mission: WeeklyMission | null = null;
     try {
       const missionResult = await totalumSdk.crud.getRecords<WeeklyMission>("weekly_mission", {
-        filter: [{ status: "active" }],
+        filter: [{ status: "active", user_id: user.id }],
         sort: { week_start: -1 },
         pagination: { limit: 1, page: 0 }
       });
@@ -78,7 +81,7 @@ export async function GET() {
         try {
           // 1. Find the category id for the mission
           const catResult = await totalumSdk.crud.getRecords<Category>("category", {
-            filter: [{ name: mission.category_name }],
+            filter: [{ name: mission.category_name, user_id: user.id }],
             pagination: { limit: 1, page: 0 }
           });
 
@@ -95,7 +98,8 @@ export async function GET() {
               filter: [
                 { category: category._id },
                 { date: { gte: missionStart } },
-                { date: { lte: missionEnd } }
+                { date: { lte: missionEnd } },
+                { user_id: user.id }
               ],
               pagination: { limit: 500, page: 0 }
             });
@@ -115,7 +119,8 @@ export async function GET() {
                 { category: category._id },
                 { booking_date: { gte: missionStart } },
                 { booking_date: { lte: missionEnd } },
-                { transaction_type: "gasto" }
+                { transaction_type: "gasto" },
+                { user_id: user.id }
               ],
               pagination: { limit: 500, page: 0 }
             });
@@ -144,7 +149,7 @@ export async function GET() {
     let budget: MonthlyBudget | null = null;
     try {
       const budgetResult = await totalumSdk.crud.getRecords<MonthlyBudget>("monthly_budget", {
-        filter: [{ month: currentMonth, year: currentYear }],
+        filter: [{ month: currentMonth, year: currentYear, user_id: user.id }],
         pagination: { limit: 1, page: 0 }
       });
       budget = budgetResult.data?.[0] || null;
@@ -160,7 +165,7 @@ export async function GET() {
     // From expense table
     try {
       const expensesResult = await totalumSdk.crud.getRecords<Expense>("expense", {
-        filter: [{ date: { gte: monthStart } }],
+        filter: [{ date: { gte: monthStart }, user_id: user.id }],
         pagination: { limit: 500, page: 0 }
       });
       const expenses = expensesResult.data || [];
@@ -177,7 +182,8 @@ export async function GET() {
       const txResult = await totalumSdk.crud.getRecords<BankTransaction>("bank_transaction", {
         filter: [
           { transaction_type: "gasto" },
-          { booking_date: { gte: monthStart } }
+          { booking_date: { gte: monthStart } },
+          { user_id: user.id }
         ],
         pagination: { limit: 500, page: 0 }
       });
@@ -251,6 +257,9 @@ export async function GET() {
     });
 
   } catch (error) {
+    if (error instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[Gamification API] Error:", error);
     return NextResponse.json(
       { ok: false, error: "Error al obtener datos de gamificación" },
@@ -262,11 +271,12 @@ export async function GET() {
 // POST: Update streak or create mission
 export async function POST(request: Request) {
   try {
+    const user = await requireAuth();
     const body: { action?: string; missionType?: string } = await request.json();
     const { action } = body;
 
     if (action === "update_streak") {
-      console.log("[Gamification API] Updating streak...");
+      console.log("[Gamification API] Updating streak for user:", user.id);
 
       // Check if there were any expenses today
       const today = new Date();
@@ -281,7 +291,8 @@ export async function POST(request: Request) {
         const expensesResult = await totalumSdk.crud.getRecords<Expense>("expense", {
           filter: [
             { date: { gte: today } },
-            { date: { lte: tomorrow } }
+            { date: { lte: tomorrow } },
+            { user_id: user.id }
           ],
           pagination: { limit: 1, page: 0 }
         });
@@ -299,7 +310,8 @@ export async function POST(request: Request) {
             filter: [
               { transaction_type: "gasto" },
               { booking_date: { gte: today } },
-              { booking_date: { lte: tomorrow } }
+              { booking_date: { lte: tomorrow } },
+              { user_id: user.id }
             ],
             pagination: { limit: 1, page: 0 }
           });
@@ -315,6 +327,7 @@ export async function POST(request: Request) {
       let streak: UserStreak | null = null;
       try {
         const streakResult = await totalumSdk.crud.getRecords<UserStreak>("user_streak", {
+          filter: [{ user_id: user.id }],
           pagination: { limit: 1, page: 0 }
         });
         streak = streakResult.data?.[0] || null;
@@ -329,7 +342,8 @@ export async function POST(request: Request) {
           best_streak: hadExpenseToday ? 0 : 1,
           last_no_spend_date: hadExpenseToday ? null : today.toISOString(),
           streak_broken_count: 0,
-          total_no_spend_days: hadExpenseToday ? 0 : 1
+          total_no_spend_days: hadExpenseToday ? 0 : 1,
+          user_id: user.id
         };
         await totalumSdk.crud.createRecord("user_streak", newStreak);
         console.log("[Gamification API] Created new streak record");
@@ -371,7 +385,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, data: { message: "Racha actualizada" } });
 
     } else if (action === "generate_mission") {
-      console.log("[Gamification API] Generating new weekly mission...");
+      console.log("[Gamification API] Generating new weekly mission for user:", user.id);
 
       const weekStart = getWeekStart();
       const weekEnd = getWeekEnd();
@@ -402,7 +416,7 @@ export async function POST(request: Request) {
       let categoryId: string | null = null;
       try {
         const catResult = await totalumSdk.crud.getRecords<Category>("category", {
-          filter: [{ name: selectedMission.category }],
+          filter: [{ name: selectedMission.category, user_id: user.id }],
           pagination: { limit: 1, page: 0 }
         });
         if (catResult.data?.[0]) {
@@ -423,7 +437,8 @@ export async function POST(request: Request) {
               filter: [
                 { category: categoryId },
                 { date: { gte: start } },
-                { date: { lte: end } }
+                { date: { lte: end } },
+                { user_id: user.id }
               ],
               pagination: { limit: 500, page: 0 }
             });
@@ -443,7 +458,8 @@ export async function POST(request: Request) {
                 { category: categoryId },
                 { transaction_type: "gasto" },
                 { booking_date: { gte: start } },
-                { booking_date: { lte: end } }
+                { booking_date: { lte: end } },
+                { user_id: user.id }
               ],
               pagination: { limit: 500, page: 0 }
             });
@@ -497,13 +513,14 @@ export async function POST(request: Request) {
         previous_week_amount: Math.round(baselineAmount * 100) / 100, // Round to 2 decimals
         current_week_amount: 0,
         category_name: selectedMission.category,
-        baseline_source: baselineSource // Optional: store this if we want to show it in UI later
+        baseline_source: baselineSource, // Optional: store this if we want to show it in UI later
+        user_id: user.id
       };
 
       // Mark any existing active missions as failed
       try {
         const existingMissions = await totalumSdk.crud.getRecords<WeeklyMission>("weekly_mission", {
-          filter: [{ status: "active" }],
+          filter: [{ status: "active", user_id: user.id }],
           pagination: { limit: 10, page: 0 }
         });
         for (const m of existingMissions.data || []) {
@@ -525,6 +542,9 @@ export async function POST(request: Request) {
     );
 
   } catch (error) {
+    if (error instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[Gamification API] POST Error:", error);
     return NextResponse.json(
       { ok: false, error: "Error al procesar la acción" },

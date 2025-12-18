@@ -1,9 +1,13 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { totalumSdk } from '@/lib/totalum';
+import { requireAuth, AuthError, unauthorizedResponse } from '@/lib/auth-utils';
 import type { UserSettings } from '@/types/database';
 
 function serializeError(err: unknown) {
+  if (err instanceof AuthError) {
+    return { message: err.message, code: 'UNAUTHORIZED', name: err.name };
+  }
   const e = err as { message?: string; code?: string; name?: string };
   return {
     message: e?.message ?? 'Unknown error',
@@ -34,9 +38,12 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
 // GET - Get user settings (returns first/default settings record)
 export async function GET() {
   try {
-    console.log('[API] GET /api/settings');
+    const user = await requireAuth();
+
+    console.log('[API] GET /api/settings - user:', user.id);
 
     const result = await totalumSdk.crud.getRecords<UserSettings>('user_settings', {
+      filter: [{ user_id: user.id }],
       pagination: { limit: 1, page: 0 },
     });
 
@@ -48,6 +55,7 @@ export async function GET() {
         base_currency_symbol: '€',
         default_country: 'ES',
         date_format: 'dd/mm/yyyy',
+        user_id: user.id,
       });
 
       return NextResponse.json({ ok: true, data: defaultSettings.data });
@@ -55,6 +63,9 @@ export async function GET() {
 
     return NextResponse.json({ ok: true, data: result.data[0] });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error('[API ERROR] GET /api/settings', err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -63,6 +74,8 @@ export async function GET() {
 // PUT - Update user settings
 export async function PUT(req: Request) {
   try {
+    const user = await requireAuth();
+
     const body = await req.json().catch(() => ({}));
     const parsed = updateSettingsSchema.safeParse(body);
 
@@ -70,10 +83,11 @@ export async function PUT(req: Request) {
       return NextResponse.json({ ok: false, error: parsed.error.flatten() }, { status: 400 });
     }
 
-    console.log('[API] PUT /api/settings - Updating settings:', parsed.data);
+    console.log('[API] PUT /api/settings - user:', user.id, 'Updating settings:', parsed.data);
 
-    // Get existing settings
+    // Get existing settings for this user
     const existingResult = await totalumSdk.crud.getRecords<UserSettings>('user_settings', {
+      filter: [{ user_id: user.id }],
       pagination: { limit: 1, page: 0 },
     });
 
@@ -91,18 +105,28 @@ export async function PUT(req: Request) {
         base_currency_symbol: updateData.base_currency_symbol || '€',
         default_country: updateData.default_country || 'ES',
         date_format: updateData.date_format || 'dd/mm/yyyy',
+        user_id: user.id,
       });
 
       return NextResponse.json({ ok: true, data: newSettings.data });
     }
 
+    // Verify ownership before update
+    const existingSettings = existingResult.data[0];
+    if ((existingSettings as UserSettings & { user_id?: string }).user_id !== user.id) {
+      return NextResponse.json({ ok: false, error: "Settings not found or access denied" }, { status: 404 });
+    }
+
     // Update existing settings
-    const settingsId = existingResult.data[0]._id;
+    const settingsId = existingSettings._id;
     const result = await totalumSdk.crud.editRecordById('user_settings', settingsId, updateData);
 
     console.log('[API] PUT /api/settings - Updated settings:', result.data);
     return NextResponse.json({ ok: true, data: result.data });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error('[API ERROR] PUT /api/settings', err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }

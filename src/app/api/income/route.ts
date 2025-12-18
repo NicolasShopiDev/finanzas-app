@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { totalumSdk } from "@/lib/totalum";
+import { requireAuth, AuthError, unauthorizedResponse } from "@/lib/auth-utils";
 import type { Income, DistributionRule } from "@/types/database";
 
 // Helper to serialize errors
 function serializeError(err: unknown) {
+  if (err instanceof AuthError) {
+    return { message: err.message, code: "UNAUTHORIZED", name: err.name };
+  }
   const e = err as Record<string, unknown>;
   return {
     message: e?.message ?? "Unknown error",
@@ -15,14 +19,16 @@ function serializeError(err: unknown) {
 // GET - Fetch incomes with optional filters
 export async function GET(req: Request) {
   try {
+    const user = await requireAuth();
+
     const { searchParams } = new URL(req.url);
     const month = searchParams.get("month");
     const year = searchParams.get("year");
     const status = searchParams.get("status");
 
-    console.log("[API /income] GET request with params:", { month, year, status });
+    console.log("[API /income] GET request - user:", user.id, "params:", { month, year, status });
 
-    const filter: Record<string, unknown>[] = [];
+    const filter: Record<string, unknown>[] = [{ user_id: user.id }];
 
     if (month) {
       filter.push({ month: parseInt(month) });
@@ -35,7 +41,7 @@ export async function GET(req: Request) {
     }
 
     const result = await totalumSdk.crud.getRecords<Income>("income", {
-      filter: filter.length > 0 ? filter : undefined,
+      filter,
       sort: { date: -1 },
       pagination: { limit: 100, page: 0 },
     });
@@ -44,6 +50,9 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ ok: true, data: result.data || [] });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API /income] GET error:", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -52,8 +61,10 @@ export async function GET(req: Request) {
 // POST - Create new income and optionally distribute
 export async function POST(req: Request) {
   try {
+    const user = await requireAuth();
+
     const body = (await req.json()) as Partial<Income> & { auto_distribute?: boolean };
-    console.log("[API /income] POST request:", body);
+    console.log("[API /income] POST request - user:", user.id, body);
 
     // Set defaults
     const incomeDate = new Date(body.date || new Date());
@@ -73,6 +84,7 @@ export async function POST(req: Request) {
       distributed_to_savings: 0,
       distributed_to_free: 0,
       is_distributed: "no",
+      user_id: user.id,
     };
 
     // Create income record
@@ -85,11 +97,14 @@ export async function POST(req: Request) {
     if (body.auto_distribute !== false &&
         incomeData.status === "confirmado" &&
         incomeData.income_type !== "transferencia_interna") {
-      await distributeIncome(createdIncome._id, body.amount || 0);
+      await distributeIncome(createdIncome._id, body.amount || 0, user.id);
     }
 
     return NextResponse.json({ ok: true, data: createdIncome });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API /income] POST error:", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -98,11 +113,19 @@ export async function POST(req: Request) {
 // PUT - Update income
 export async function PUT(req: Request) {
   try {
+    const user = await requireAuth();
+
     const body = (await req.json()) as Partial<Income> & { id: string };
-    console.log("[API /income] PUT request:", body);
+    console.log("[API /income] PUT request - user:", user.id, body);
 
     if (!body.id) {
       return NextResponse.json({ ok: false, error: "Missing income ID" }, { status: 400 });
+    }
+
+    // Verify ownership
+    const incomeResult = await totalumSdk.crud.getRecordById<Income>("income", body.id);
+    if (!incomeResult.data || (incomeResult.data as Income & { user_id?: string }).user_id !== user.id) {
+      return NextResponse.json({ ok: false, error: "Income not found or access denied" }, { status: 404 });
     }
 
     const updates: Record<string, unknown> = {};
@@ -119,6 +142,9 @@ export async function PUT(req: Request) {
 
     return NextResponse.json({ ok: true, data: result.data });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API /income] PUT error:", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -127,6 +153,8 @@ export async function PUT(req: Request) {
 // DELETE - Remove income
 export async function DELETE(req: Request) {
   try {
+    const user = await requireAuth();
+
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
 
@@ -134,25 +162,34 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ ok: false, error: "Missing income ID" }, { status: 400 });
     }
 
-    console.log("[API /income] DELETE request:", id);
+    console.log("[API /income] DELETE request - user:", user.id, id);
+
+    // Verify ownership
+    const incomeResult = await totalumSdk.crud.getRecordById<Income>("income", id);
+    if (!incomeResult.data || (incomeResult.data as Income & { user_id?: string }).user_id !== user.id) {
+      return NextResponse.json({ ok: false, error: "Income not found or access denied" }, { status: 404 });
+    }
 
     await totalumSdk.crud.deleteRecordById("income", id);
 
     return NextResponse.json({ ok: true });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API /income] DELETE error:", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
 }
 
 // Helper function to distribute income according to active rule
-async function distributeIncome(incomeId: string, amount: number) {
+async function distributeIncome(incomeId: string, amount: number, userId: string) {
   try {
-    console.log("[API /income] Distributing income:", incomeId, amount);
+    console.log("[API /income] Distributing income:", incomeId, amount, "user:", userId);
 
-    // Get active distribution rule
+    // Get active distribution rule for this user
     const rulesResult = await totalumSdk.crud.getRecords<DistributionRule>("distribution_rule", {
-      filter: [{ is_active: "si" }],
+      filter: [{ user_id: userId }, { is_active: "si" }],
       pagination: { limit: 1, page: 0 },
     });
 
@@ -179,7 +216,7 @@ async function distributeIncome(incomeId: string, amount: number) {
 
     // Add savings movement if any goes to savings
     if (toSavings > 0) {
-      await addSavingsMovement(toSavings, incomeId, "Distribución automática de ingreso");
+      await addSavingsMovement(toSavings, incomeId, "Distribución automática de ingreso", userId);
     }
 
     console.log("[API /income] Income distributed successfully");
@@ -189,10 +226,11 @@ async function distributeIncome(incomeId: string, amount: number) {
 }
 
 // Helper to add savings movement and update savings balance
-async function addSavingsMovement(amount: number, incomeId: string, description: string) {
+async function addSavingsMovement(amount: number, incomeId: string, description: string, userId: string) {
   try {
-    // Get or create savings record
+    // Get or create savings record for this user
     const savingsResult = await totalumSdk.crud.getRecords("savings", {
+      filter: [{ user_id: userId }],
       pagination: { limit: 1, page: 0 },
     });
 
@@ -209,6 +247,7 @@ async function addSavingsMovement(amount: number, incomeId: string, description:
         total_balance: 0,
         currency: "EUR",
         last_updated: new Date().toISOString(),
+        user_id: userId,
       });
       savingsId = (newSavings.data as { _id: string })._id;
     }
@@ -225,6 +264,7 @@ async function addSavingsMovement(amount: number, incomeId: string, description:
       balance_after: newBalance,
       savings: savingsId,
       income: incomeId,
+      user_id: userId,
     });
 
     // Update savings balance

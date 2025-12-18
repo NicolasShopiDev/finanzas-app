@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { totalumSdk } from "@/lib/totalum";
+import { requireAuth, AuthError, unauthorizedResponse } from "@/lib/auth-utils";
 import type { SavingsGoal, Savings } from "@/types/database";
 
 // Helper to serialize errors
@@ -15,19 +16,20 @@ function serializeError(err: unknown) {
 // GET - Fetch all savings goals
 export async function GET(req: Request) {
   try {
+    const user = await requireAuth();
     const { searchParams } = new URL(req.url);
     const status = searchParams.get("status"); // active, paused, completed, or all
 
-    console.log("[API /savings-goals] GET request:", { status });
+    console.log("[API /savings-goals] GET request for user:", user.id, { status });
 
-    const filter: Record<string, unknown>[] = [];
+    const filter: Record<string, unknown>[] = [{ user_id: user.id }];
 
     if (status && status !== "all") {
       filter.push({ status: status === "active" ? "activo" : status === "paused" ? "pausado" : "completado" });
     }
 
     const result = await totalumSdk.crud.getRecords<SavingsGoal>("savings_goal", {
-      filter: filter.length > 0 ? filter : undefined,
+      filter,
       sort: { priority: 1 }, // alta first
       pagination: { limit: 50, page: 0 },
     });
@@ -36,6 +38,9 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ ok: true, data: result.data || [] });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API /savings-goals] GET error:", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -44,8 +49,9 @@ export async function GET(req: Request) {
 // POST - Create new savings goal
 export async function POST(req: Request) {
   try {
+    const user = await requireAuth();
     const body = (await req.json()) as Partial<SavingsGoal>;
-    console.log("[API /savings-goals] POST request:", body);
+    console.log("[API /savings-goals] POST request for user:", user.id, body);
 
     if (!body.name || !body.target_amount) {
       return NextResponse.json({ ok: false, error: "Name and target amount are required" }, { status: 400 });
@@ -53,6 +59,7 @@ export async function POST(req: Request) {
 
     // Get savings record for linking
     const savingsResult = await totalumSdk.crud.getRecords<Savings>("savings", {
+      filter: [{ user_id: user.id }],
       pagination: { limit: 1, page: 0 },
     });
 
@@ -70,6 +77,7 @@ export async function POST(req: Request) {
       icon: body.icon || "🎯",
       target_date: body.target_date || null,
       notes: body.notes || "",
+      user_id: user.id
     };
 
     if (savingsId) {
@@ -81,6 +89,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, data: result.data });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API /savings-goals] POST error:", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -89,11 +100,18 @@ export async function POST(req: Request) {
 // PUT - Update savings goal
 export async function PUT(req: Request) {
   try {
+    const user = await requireAuth();
     const body = (await req.json()) as Partial<SavingsGoal> & { id: string };
-    console.log("[API /savings-goals] PUT request:", body);
+    console.log("[API /savings-goals] PUT request for user:", user.id, body);
 
     if (!body.id) {
       return NextResponse.json({ ok: false, error: "Missing goal ID" }, { status: 400 });
+    }
+
+    // Verify ownership
+    const goalResult = await totalumSdk.crud.getRecordById<SavingsGoal>("savings_goal", body.id);
+    if (!goalResult.data || (goalResult.data as any).user_id !== user.id) {
+      return unauthorizedResponse();
     }
 
     const updates: Record<string, unknown> = {};
@@ -111,6 +129,9 @@ export async function PUT(req: Request) {
 
     return NextResponse.json({ ok: true, data: result.data });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API /savings-goals] PUT error:", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
@@ -119,6 +140,7 @@ export async function PUT(req: Request) {
 // DELETE - Remove savings goal
 export async function DELETE(req: Request) {
   try {
+    const user = await requireAuth();
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
 
@@ -126,12 +148,21 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ ok: false, error: "Missing goal ID" }, { status: 400 });
     }
 
-    console.log("[API /savings-goals] DELETE request:", id);
+    console.log("[API /savings-goals] DELETE request for user:", user.id, id);
 
-    // Get goal first to return its amount to available savings
+    // Get goal first to verify ownership and return its amount to available savings
     const goalResult = await totalumSdk.crud.getRecordById<SavingsGoal>("savings_goal", id);
 
-    if (goalResult.data && goalResult.data.current_amount > 0) {
+    if (!goalResult.data) {
+      return NextResponse.json({ ok: false, error: "Goal not found" }, { status: 404 });
+    }
+
+    // Verify ownership
+    if ((goalResult.data as any).user_id !== user.id) {
+      return unauthorizedResponse();
+    }
+
+    if (goalResult.data.current_amount > 0) {
       // The assigned amount returns to available savings (no movement needed,
       // as it was never "locked" - just a logical assignment)
       console.log("[API /savings-goals] Goal had", goalResult.data.current_amount, "assigned - releasing");
@@ -141,6 +172,9 @@ export async function DELETE(req: Request) {
 
     return NextResponse.json({ ok: true });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return unauthorizedResponse();
+    }
     console.error("[API /savings-goals] DELETE error:", err);
     return NextResponse.json({ ok: false, error: serializeError(err) }, { status: 500 });
   }
